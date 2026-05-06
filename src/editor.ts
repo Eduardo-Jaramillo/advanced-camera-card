@@ -324,6 +324,11 @@ interface EditorMenuTarget {
   key: string | number;
 }
 
+interface ValueChangeItem {
+  key: string;
+  value: string | undefined;
+}
+
 const options: EditorOptions = {
   cameras: {
     icon: 'video',
@@ -1068,7 +1073,7 @@ export class AdvancedCameraCardEditor extends LitElement implements LovelaceCard
         .label=${this._getLabel(configPath)}
         .value=${getConfigValue(this._config, configPath, '')}
         .required=${false}
-        @value-changed=${(ev) => this._valueChangedHandler(configPath, ev)}
+        @value-changed=${(ev) => this._cameraChangedHandler(configPath, ev)}
       >
       </ha-selector>
     `;
@@ -3334,6 +3339,21 @@ export class AdvancedCameraCardEditor extends LitElement implements LovelaceCard
   }
 
   /**
+   * Handle the extraction of event value.
+   * @param ev An event
+   */
+  protected _extractEvent(ev: CustomEvent<{ value: unknown }>): string | undefined {
+    let value;
+    if (ev.detail && ev.detail.value !== undefined) {
+      value = ev.detail.value;
+      if (typeof value === 'string') {
+        value = value.trim();
+      }
+    }
+    return value;
+  }
+
+  /**
    * Handle a changed option value.
    * @param ev Event triggering the change.
    */
@@ -3345,13 +3365,7 @@ export class AdvancedCameraCardEditor extends LitElement implements LovelaceCard
       return;
     }
 
-    let value;
-    if (ev.detail && ev.detail.value !== undefined) {
-      value = ev.detail.value;
-      if (typeof value === 'string') {
-        value = value.trim();
-      }
-    }
+    const value = this._extractEvent(ev);
     if (getConfigValue(this._config, key) === value) {
       return;
     }
@@ -3363,6 +3377,63 @@ export class AdvancedCameraCardEditor extends LitElement implements LovelaceCard
       setConfigValue(newConfig, key, value);
     }
     this._updateConfig(newConfig);
+  }
+
+  /**
+   * Handle multiple changes to options.
+   * @param valueChange array of changes.
+   */
+  protected _batchValueChangedHandler(valueChange: ValueChangeItem[]): void {
+    if (!this._config || !this.hass) {
+      return;
+    }
+
+    const newConfig = copyConfig(this._config);
+    for (const { key, value } of valueChange) {
+      if (getConfigValue(newConfig, key) === value) {
+        continue;
+      }
+
+      if (value === '' || value === undefined) {
+        deleteConfigValue(newConfig, key);
+      } else {
+        setConfigValue(newConfig, key, value);
+      }
+    }
+    this._updateConfig(newConfig);
+  }
+
+  /**
+   * Determine frigate client id of camera if any to update with camera
+   * @param ev Camera selection event triggering the change
+   */
+  protected _cameraChangedHandler(
+    key: string,
+    ev: CustomEvent<{ value: unknown }>,
+  ): void {
+    if (!this._config || !this.hass) {
+      return;
+    }
+
+    const value = this._extractEvent(ev);
+    if (!value) {
+      this._valueChangedHandler(key, ev);
+      return;
+    }
+
+    const clientId = this.hass.states[value]?.attributes?.client_id;
+    if (clientId === '' || clientId === undefined) {
+      this._valueChangedHandler(key, ev);
+    } else {
+      const clientIdKey = `${key.substring(0, key.indexOf(']'))}].frigate.client_id`;
+      this._batchValueChangedHandler([
+        { key, value },
+        {
+          key: clientIdKey,
+          value: clientId !== 'frigate' ? clientId : '',
+        },
+      ]);
+    }
   }
 
   static get styles(): CSSResultGroup {
